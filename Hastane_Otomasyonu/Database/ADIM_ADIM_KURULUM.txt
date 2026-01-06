@@ -1,0 +1,91 @@
+========================================
+HASTANE VERİTABANI KURULUM REHBERİ
+========================================
+
+ADIM 1: SQL Server Management Studio'yu Açın
+   - SSMS 2022'yi açın
+   - Connect butonuna tıklayın ve SQL Server'ınıza bağlanın
+   - Object Explorer'da SQL Server instance'ınızı görmelisiniz
+
+ADIM 2: Yeni Sorgu Penceresi Açın
+   - Üst menüden "New Query" butonuna tıklayın
+   - VEYA Ctrl+N tuşlarına basın
+
+ADIM 3: Script Dosyasını Açın
+   - Proje klasörünüzde: Hastane_Otomasyonu\Database\CreateDatabase.sql
+   - Bu dosyayı Notepad veya Visual Studio'da açın
+   - Tüm içeriği kopyalayın (Ctrl+A, Ctrl+C)
+
+ADIM 4: Script'i SSMS'e Yapıştırın
+   - SSMS'deki sorgu penceresine yapıştırın (Ctrl+V)
+
+ADIM 5: Script'i Çalıştırın
+   - Execute butonuna tıklayın (Yeşil ▶ ikonu)
+   - VEYA F5 tuşuna basın
+   - VEYA Ctrl+E tuşlarına basın
+
+ADIM 6: Sonuçları Kontrol Edin
+   - Messages sekmesinde başarı mesajlarını göreceksiniz:
+     * "Hastane veritabanı oluşturuldu."
+     * "Tbl_Hastalar tablosu oluşturuldu."
+     * vb.
+
+ADIM 7: Veritabanını Doğrulayın
+   - Object Explorer'da "Databases" klasörüne sağ tıklayın
+   - "Refresh" seçeneğine tıklayın
+   - "Hastane" veritabanını görmelisiniz
+   - "Hastane" veritabanını genişletin
+   - "Tables" klasörünün altında tabloları görmelisiniz:
+     * Tbl_Branslar
+     * Tbl_Doktorlar
+     * Tbl_Hastalar
+     * Tbl_Sekreterler
+     * Tbl_Randevular
+     * Tbl_Duyurular
+
+ADIM 8: Test Kullanıcılarını Kontrol Edin
+   - "Hastane" veritabanını genişletin
+   - "Tables" > "Tbl_Hastalar" > Sağ tık > "Select Top 1000 Rows"
+   - Test hasta kaydını görmelisiniz (TC: 22222222222)
+
+========================================
+SORUN GİDERME
+========================================
+
+EĞER "Invalid object name" HATASI ALIRSANIZ:
+1. SSMS'de Object Explorer'ı yenileyin (Refresh)
+2. "Hastane" veritabanının oluşturulduğundan emin olun
+3. Script'in tümünü tekrar çalıştırın
+4. Her "GO" komutundan sonra bekleyin
+
+EĞER VERİTABANI OLUŞTURULMUYORSA:
+1. SQL Server'ın çalıştığından emin olun
+2. SQL Server Configuration Manager'ı kontrol edin
+3. SQL Server (MSSQLSERVER) servisinin "Running" olduğundan emin olun
+
+EĞER BAĞLANTI HATASI ALIRSANIZ:
+1. App.config dosyasındaki connection string'i kontrol edin
+2. SQL Server adınızı kontrol edin:
+   - Default: (local) veya . veya localhost
+   - Express: (local)\SQLEXPRESS
+   - LocalDB: (localdb)\MSSQLLocalDB
+3. Windows Authentication kullanıyorsunuz, SQL Authentication kullanmıyorsunuz
+
+========================================
+TEST KULLANICILARI
+========================================
+
+Doktor:
+  TC: 11111111111
+  Şifre: 1234
+
+Hasta:
+  TC: 22222222222
+  Şifre: 1234
+
+Sekreter:
+  TC: 33333333333
+  Şifre: 1234
+
+========================================
+

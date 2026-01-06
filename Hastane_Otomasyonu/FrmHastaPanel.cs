@@ -1,11 +1,16 @@
 using System;
 using System.Drawing;
+using System.Net.Http;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Runtime.InteropServices;
 using DevExpress.XtraEditors;
 using DevExpress.Utils.Layout;
 using Microsoft.Data.SqlClient;
 using Hastane_Otomasyonu.Database;
+using Hastane_Otomasyonu.Services;
 
 namespace Hastane_Otomasyonu
 {
@@ -56,6 +61,20 @@ namespace Hastane_Otomasyonu
         private TextEdit _profileIlce;
         private MemoEdit _profileAdres;
         private SimpleButton _profileSave;
+
+        // AI (Gemini) - İletişim & Etkileşim sayfası yerine
+        private MemoEdit _aiChat;
+        private MemoEdit _aiInput;
+        private SimpleButton _aiBtnAnalyze;
+        private SimpleButton _aiBtnSend;
+        private SimpleButton _aiBtnPdfSelect;
+        private SimpleButton _aiBtnPdfClear;
+        private LabelControl _aiStatus;
+        private CancellationTokenSource _aiCts;
+        private readonly HttpClient _aiHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(45) };
+        private string _aiChatBuffer = "";
+        private byte[] _aiPdfBytes;
+        private string _aiPdfName;
 
         [DllImport("user32.dll", EntryPoint = "ReleaseCapture")]
         private static extern void ReleaseCapture();
@@ -123,7 +142,7 @@ namespace Hastane_Otomasyonu
             _pageRandevuModern ??= CreateModernRandevuPage();
             _pageTibbiBilgiler ??= CreateModernMedicalPage();
             _pageProfil ??= CreateModernProfilePage();
-            _pageIletisim ??= CreatePlaceholderPage("İletişim ve Etkileşim", "İçerik yakında eklenecek.");
+            _pageIletisim ??= CreateAiAssistantPage();
 
             if (!navigationFrame1.Pages.Contains(_pageAnaSayfa))
             {
@@ -185,6 +204,485 @@ namespace Hastane_Otomasyonu
             card.Controls.Add(lblSub);
             page.Controls.Add(card);
             return page;
+        }
+
+        private DevExpress.XtraBars.Navigation.NavigationPage CreateAiAssistantPage()
+        {
+            var page = new DevExpress.XtraBars.Navigation.NavigationPage();
+            page.Name = "pageAiAssistant";
+            page.Appearance.BackColor = ColorTranslator.FromHtml("#0B1220");
+            page.Appearance.Options.UseBackColor = true;
+            page.Padding = new Padding(22);
+
+            var card = new PanelControl
+            {
+                BorderStyle = DevExpress.XtraEditors.Controls.BorderStyles.NoBorder,
+                Dock = DockStyle.Fill,
+                Padding = new Padding(28, 24, 28, 22)
+            };
+            card.Appearance.BackColor = Color.Transparent;
+            card.Appearance.Options.UseBackColor = true;
+
+            var fill = Color.FromArgb(30, 42, 56); // #1E2A38
+            card.Paint += (s, e) =>
+            {
+                e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                var rect = card.ClientRectangle;
+                rect.Inflate(-1, -1);
+                int radius = 22;
+                int d = radius * 2;
+                using var path = new System.Drawing.Drawing2D.GraphicsPath();
+                path.AddArc(rect.X, rect.Y, d, d, 180, 90);
+                path.AddArc(rect.Right - d, rect.Y, d, d, 270, 90);
+                path.AddArc(rect.Right - d, rect.Bottom - d, d, d, 0, 90);
+                path.AddArc(rect.X, rect.Bottom - d, d, d, 90, 90);
+                path.CloseFigure();
+                using var brush = new SolidBrush(fill);
+                e.Graphics.FillPath(brush, path);
+                using var pen = new Pen(Color.FromArgb(120, Color.White), 1.4f);
+                e.Graphics.DrawPath(pen, path);
+            };
+
+            var lblTitle = new LabelControl
+            {
+                AllowHtmlString = true,
+                AutoSizeMode = LabelAutoSizeMode.None,
+                Dock = DockStyle.Top,
+                Height = 58,
+                Text = "<color=#5D9CEC>Yapay Zeka</color> <color=#ECEFF1>Asistanı</color>"
+            };
+            lblTitle.Appearance.Font = new Font("Segoe UI", 26F, FontStyle.Bold);
+            lblTitle.Appearance.ForeColor = ColorTranslator.FromHtml("#ECEFF1");
+            lblTitle.Appearance.Options.UseFont = true;
+            lblTitle.Appearance.Options.UseForeColor = true;
+
+            var lblInfo = new LabelControl
+            {
+                Dock = DockStyle.Top,
+                Height = 44,
+                Text = "Kan tahlili PDF dosyanızı yükleyip (varsa referans aralıklarıyla) normal/yüksek/düşük olarak özetler. Tıbbi tanı yerine geçmez."
+            };
+            lblInfo.Appearance.Font = new Font("Segoe UI", 11F);
+            lblInfo.Appearance.ForeColor = ColorTranslator.FromHtml("#B0BEC5");
+            lblInfo.Appearance.Options.UseFont = true;
+            lblInfo.Appearance.Options.UseForeColor = true;
+
+            _aiStatus = new LabelControl
+            {
+                Dock = DockStyle.Top,
+                Height = 22,
+                Text = ""
+            };
+            _aiStatus.Appearance.Font = new Font("Segoe UI", 9.5F, FontStyle.Bold);
+            _aiStatus.Appearance.ForeColor = ColorTranslator.FromHtml("#94A3B8");
+            _aiStatus.Appearance.Options.UseFont = true;
+            _aiStatus.Appearance.Options.UseForeColor = true;
+
+            var sep = new SeparatorControl { Dock = DockStyle.Top, Height = 18 };
+            sep.LineColor = Color.FromArgb(70, 255, 255, 255);
+
+            // PDF seçimi (hasta yükler)
+            var pdfRow = new TablePanel { Dock = DockStyle.Top, Height = 54 };
+            pdfRow.Appearance.BackColor = Color.Transparent;
+            pdfRow.Appearance.Options.UseBackColor = true;
+            pdfRow.Columns.AddRange(new[]
+            {
+                new TablePanelColumn(TablePanelEntityStyle.Absolute, 160),
+                new TablePanelColumn(TablePanelEntityStyle.Relative, 1),
+                new TablePanelColumn(TablePanelEntityStyle.Absolute, 54),
+            });
+            pdfRow.Rows.Add(new TablePanelRow(TablePanelEntityStyle.Absolute, 54));
+
+            _aiBtnPdfSelect = new SimpleButton
+            {
+                Text = "PDF Seç",
+                Dock = DockStyle.Fill,
+                Cursor = Cursors.Hand,
+                ButtonStyle = DevExpress.XtraEditors.Controls.BorderStyles.NoBorder
+            };
+            _aiBtnPdfSelect.LookAndFeel.UseDefaultLookAndFeel = false;
+            _aiBtnPdfSelect.Appearance.BackColor = ColorTranslator.FromHtml("#111827");
+            _aiBtnPdfSelect.Appearance.ForeColor = Color.White;
+            _aiBtnPdfSelect.Appearance.Font = new Font("Segoe UI", 10.5F, FontStyle.Bold);
+            _aiBtnPdfSelect.Appearance.Options.UseBackColor = true;
+            _aiBtnPdfSelect.Appearance.Options.UseForeColor = true;
+            _aiBtnPdfSelect.Appearance.Options.UseFont = true;
+            _aiBtnPdfSelect.AppearanceHovered.BackColor = ColorTranslator.FromHtml("#1F2937");
+            _aiBtnPdfSelect.AppearanceHovered.Options.UseBackColor = true;
+
+            var pdfInfo = new LabelControl
+            {
+                Dock = DockStyle.Fill,
+                AutoSizeMode = LabelAutoSizeMode.None,
+                Text = "PDF: seçilmedi"
+            };
+            pdfInfo.Appearance.ForeColor = ColorTranslator.FromHtml("#B0BEC5");
+            pdfInfo.Appearance.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
+            pdfInfo.Appearance.Options.UseForeColor = true;
+            pdfInfo.Appearance.Options.UseFont = true;
+
+            _aiBtnPdfClear = new SimpleButton
+            {
+                Text = "✕",
+                Dock = DockStyle.Fill,
+                Cursor = Cursors.Hand,
+                ButtonStyle = DevExpress.XtraEditors.Controls.BorderStyles.NoBorder
+            };
+            _aiBtnPdfClear.LookAndFeel.UseDefaultLookAndFeel = false;
+            _aiBtnPdfClear.Appearance.BackColor = ColorTranslator.FromHtml("#111827");
+            _aiBtnPdfClear.Appearance.ForeColor = ColorTranslator.FromHtml("#E5E7EB");
+            _aiBtnPdfClear.Appearance.Font = new Font("Segoe UI", 11F, FontStyle.Bold);
+            _aiBtnPdfClear.Appearance.Options.UseBackColor = true;
+            _aiBtnPdfClear.Appearance.Options.UseForeColor = true;
+            _aiBtnPdfClear.Appearance.Options.UseFont = true;
+            _aiBtnPdfClear.AppearanceHovered.BackColor = ColorTranslator.FromHtml("#DC2626");
+            _aiBtnPdfClear.AppearanceHovered.ForeColor = Color.White;
+            _aiBtnPdfClear.AppearanceHovered.Options.UseBackColor = true;
+            _aiBtnPdfClear.AppearanceHovered.Options.UseForeColor = true;
+
+            pdfRow.Controls.Add(_aiBtnPdfSelect);
+            pdfRow.SetColumn(_aiBtnPdfSelect, 0);
+            pdfRow.SetRow(_aiBtnPdfSelect, 0);
+            pdfRow.Controls.Add(pdfInfo);
+            pdfRow.SetColumn(pdfInfo, 1);
+            pdfRow.SetRow(pdfInfo, 0);
+            pdfRow.Controls.Add(_aiBtnPdfClear);
+            pdfRow.SetColumn(_aiBtnPdfClear, 2);
+            pdfRow.SetRow(_aiBtnPdfClear, 0);
+
+            _aiChat = new MemoEdit
+            {
+                Dock = DockStyle.Fill
+            };
+            _aiChat.Properties.ReadOnly = true;
+            _aiChat.Properties.BorderStyle = DevExpress.XtraEditors.Controls.BorderStyles.NoBorder;
+            _aiChat.Properties.Appearance.BackColor = ColorTranslator.FromHtml("#0F172A");
+            _aiChat.Properties.Appearance.ForeColor = ColorTranslator.FromHtml("#E5E7EB");
+            _aiChat.Properties.Appearance.Font = new Font("Segoe UI", 10.5F);
+            _aiChat.Properties.Appearance.Options.UseBackColor = true;
+            _aiChat.Properties.Appearance.Options.UseForeColor = true;
+            _aiChat.Properties.Appearance.Options.UseFont = true;
+            _aiChat.Properties.ScrollBars = ScrollBars.Vertical;
+
+            var bottom = new PanelControl
+            {
+                Dock = DockStyle.Bottom,
+                Height = 140,
+                BorderStyle = DevExpress.XtraEditors.Controls.BorderStyles.NoBorder,
+                Padding = new Padding(0, 14, 0, 0)
+            };
+            bottom.Appearance.BackColor = Color.Transparent;
+            bottom.Appearance.Options.UseBackColor = true;
+
+            _aiInput = new MemoEdit
+            {
+                Dock = DockStyle.Fill
+            };
+            _aiInput.Properties.BorderStyle = DevExpress.XtraEditors.Controls.BorderStyles.NoBorder;
+            _aiInput.Properties.NullValuePrompt = "Sorunuzu yazın (örn. 'Bu tahlillerde dikkat çeken bir şey var mı?')";
+            _aiInput.Properties.NullValuePromptShowForEmptyValue = true;
+            _aiInput.Properties.Appearance.BackColor = ColorTranslator.FromHtml("#111827");
+            _aiInput.Properties.Appearance.ForeColor = ColorTranslator.FromHtml("#E5E7EB");
+            _aiInput.Properties.Appearance.Font = new Font("Segoe UI", 10.5F);
+            _aiInput.Properties.Appearance.Options.UseBackColor = true;
+            _aiInput.Properties.Appearance.Options.UseForeColor = true;
+            _aiInput.Properties.Appearance.Options.UseFont = true;
+
+            _aiBtnAnalyze = new SimpleButton
+            {
+                Text = "TAHLİLLERİ DEĞERLENDİR",
+                Dock = DockStyle.Fill,
+                Cursor = Cursors.Hand,
+                ButtonStyle = DevExpress.XtraEditors.Controls.BorderStyles.NoBorder
+            };
+            _aiBtnAnalyze.LookAndFeel.UseDefaultLookAndFeel = false;
+            _aiBtnAnalyze.Appearance.BackColor = ColorTranslator.FromHtml("#5D9CEC");
+            _aiBtnAnalyze.Appearance.ForeColor = Color.White;
+            _aiBtnAnalyze.Appearance.Font = new Font("Segoe UI", 10.5F, FontStyle.Bold);
+            _aiBtnAnalyze.Appearance.Options.UseBackColor = true;
+            _aiBtnAnalyze.Appearance.Options.UseForeColor = true;
+            _aiBtnAnalyze.Appearance.Options.UseFont = true;
+            _aiBtnAnalyze.AppearanceHovered.BackColor = ColorTranslator.FromHtml("#6EA8F1");
+            _aiBtnAnalyze.AppearanceHovered.Options.UseBackColor = true;
+            _aiBtnAnalyze.AppearancePressed.BackColor = ColorTranslator.FromHtml("#4B88DA");
+            _aiBtnAnalyze.AppearancePressed.Options.UseBackColor = true;
+
+            _aiBtnSend = new SimpleButton
+            {
+                Text = "GÖNDER",
+                Dock = DockStyle.Fill,
+                Cursor = Cursors.Hand,
+                ButtonStyle = DevExpress.XtraEditors.Controls.BorderStyles.NoBorder
+            };
+            _aiBtnSend.LookAndFeel.UseDefaultLookAndFeel = false;
+            _aiBtnSend.Appearance.BackColor = ColorTranslator.FromHtml("#111827");
+            _aiBtnSend.Appearance.ForeColor = Color.White;
+            _aiBtnSend.Appearance.Font = new Font("Segoe UI", 10.5F, FontStyle.Bold);
+            _aiBtnSend.Appearance.Options.UseBackColor = true;
+            _aiBtnSend.Appearance.Options.UseForeColor = true;
+            _aiBtnSend.Appearance.Options.UseFont = true;
+            _aiBtnSend.AppearanceHovered.BackColor = ColorTranslator.FromHtml("#1F2937");
+            _aiBtnSend.AppearanceHovered.Options.UseBackColor = true;
+            _aiBtnSend.AppearancePressed.BackColor = ColorTranslator.FromHtml("#0B1220");
+            _aiBtnSend.AppearancePressed.Options.UseBackColor = true;
+
+            var layout = new TablePanel { Dock = DockStyle.Fill };
+            layout.Appearance.BackColor = Color.Transparent;
+            layout.Appearance.Options.UseBackColor = true;
+            layout.Columns.AddRange(new[]
+            {
+                new TablePanelColumn(TablePanelEntityStyle.Relative, 1),
+                new TablePanelColumn(TablePanelEntityStyle.Absolute, 220),
+                new TablePanelColumn(TablePanelEntityStyle.Absolute, 120),
+            });
+            layout.Rows.AddRange(new[]
+            {
+                new TablePanelRow(TablePanelEntityStyle.Relative, 1),
+                new TablePanelRow(TablePanelEntityStyle.Absolute, 54),
+            });
+
+            layout.Controls.Add(_aiInput);
+            layout.SetColumn(_aiInput, 0);
+            layout.SetRow(_aiInput, 0);
+            layout.SetColumnSpan(_aiInput, 3);
+
+            layout.Controls.Add(_aiBtnAnalyze);
+            layout.SetColumn(_aiBtnAnalyze, 1);
+            layout.SetRow(_aiBtnAnalyze, 1);
+
+            layout.Controls.Add(_aiBtnSend);
+            layout.SetColumn(_aiBtnSend, 2);
+            layout.SetRow(_aiBtnSend, 1);
+
+            bottom.Controls.Add(layout);
+
+            card.Controls.Add(_aiChat);
+            card.Controls.Add(bottom);
+            card.Controls.Add(sep);
+            card.Controls.Add(pdfRow);
+            card.Controls.Add(_aiStatus);
+            card.Controls.Add(lblInfo);
+            card.Controls.Add(lblTitle);
+
+            page.Controls.Add(card);
+
+            // Wire-up
+            _aiBtnAnalyze.Click += async (_, _) => await RunAiAnalysisAsync(userQuestion: null);
+            _aiBtnSend.Click += async (_, _) => await RunAiAnalysisAsync(userQuestion: _aiInput?.Text);
+            _aiBtnPdfSelect.Click += (_, _) =>
+            {
+                using var dlg = new OpenFileDialog
+                {
+                    Filter = "PDF Dosyası (*.pdf)|*.pdf",
+                    Title = "Kan Tahlili PDF Seç"
+                };
+                if (dlg.ShowDialog() == DialogResult.OK)
+                {
+                    try
+                    {
+                        var bytes = System.IO.File.ReadAllBytes(dlg.FileName);
+                        const int maxBytes = 8 * 1024 * 1024;
+                        if (bytes.Length > maxBytes)
+                        {
+                            XtraMessageBox.Show("PDF çok büyük (8MB üstü). Lütfen daha küçük bir PDF yükleyin.", "PDF", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                            return;
+                        }
+                        _aiPdfBytes = bytes;
+                        _aiPdfName = System.IO.Path.GetFileName(dlg.FileName);
+                        pdfInfo.Text = $"PDF: {_aiPdfName}";
+                    }
+                    catch (Exception ex)
+                    {
+                        XtraMessageBox.Show(ex.Message, "PDF Okuma Hatası", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                }
+            };
+            _aiBtnPdfClear.Click += (_, _) =>
+            {
+                _aiPdfBytes = null;
+                _aiPdfName = null;
+                pdfInfo.Text = "PDF: seçilmedi";
+            };
+
+            // First render: show key status
+            UpdateAiAvailabilityUI();
+
+            return page;
+        }
+
+        private void UpdateAiAvailabilityUI()
+        {
+            try
+            {
+                var key = GeminiClient.GetApiKeyFromEnvironment();
+                bool ok = !string.IsNullOrWhiteSpace(key);
+                if (_aiBtnAnalyze != null) _aiBtnAnalyze.Enabled = ok;
+                if (_aiBtnSend != null) _aiBtnSend.Enabled = ok;
+                if (_aiStatus != null)
+                {
+                    _aiStatus.Text = ok
+                        ? "Hazır: Tahlillerinizden otomatik özet çıkarabilirsiniz."
+                        : "Gemini API anahtarı yok. Windows ortam değişkeni olarak GEMINI_API_KEY tanımlayın.";
+                }
+            }
+            catch { }
+        }
+
+        private string BuildTahlilPrompt(string labsText, string userQuestion)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("Rolün: Sağlık bilgisi veren bir asistan. TIBBİ TANI KOYMA.");
+            sb.AppendLine("Kısıt: Yanıt Türkçe olsun. Kısa, anlaşılır, maddeler halinde yaz.");
+            sb.AppendLine("Uyarı: Bu yorum bir doktora danışmanın yerine geçmez. Acil belirti varsa acile yönlendir.");
+            sb.AppendLine();
+            sb.AppendLine("Eğer kullanıcı PDF yüklediyse PDF içindeki kan tahlilini oku ve değerlendir.");
+            sb.AppendLine("PDF'de referans aralığı varsa: her parametre için Düşük/Normal/Yüksek sınıflandır.");
+            sb.AppendLine("Referans aralığı yoksa: kesin sınıflandırma yapma, 'Bilinmiyor' de ve gerekli referans aralığını iste.");
+            sb.AppendLine();
+            if (!string.IsNullOrWhiteSpace(labsText))
+            {
+                sb.AppendLine("Aşağıdaki tahlil kayıtları hastane otomasyonundan alınmıştır (ek bilgi):");
+                sb.AppendLine(labsText);
+                sb.AppendLine();
+            }
+            if (!string.IsNullOrWhiteSpace(userQuestion))
+            {
+                sb.AppendLine("Hastanın sorusu:");
+                sb.AppendLine(userQuestion.Trim());
+                sb.AppendLine();
+            }
+            sb.AppendLine("İstek:");
+            sb.AppendLine("- Eğer PDF varsa şu formatta tablo üret: Parametre | Değer | Birim | Referans | Yorum (Düşük/Normal/Yüksek/Bilinmiyor).");
+            sb.AppendLine("- Sonra kısa özet ve dikkat edilmesi gereken olası noktaları belirt (kesin teşhis iddiası olmadan).");
+            sb.AppendLine("- Doktora sorulabilecek 5 soru öner.");
+            return sb.ToString();
+        }
+
+        private string GetLatestTahlillerAsText(int maxRows = 20)
+        {
+            try
+            {
+                using var conn = SqlBaglantisi.Instance.GetConnection();
+                string q = @"SELECT TOP (@n)
+                                    ISNULL(CONVERT(varchar(10), TahlilTarih, 120), '') AS Tarih,
+                                    ISNULL(TahlilTur,'') AS Tur,
+                                    ISNULL(TahlilAd,'') AS Ad,
+                                    ISNULL(TahlilSonuc,'') AS Sonuc,
+                                    ISNULL(TahlilDurum,'') AS Durum,
+                                    ISNULL(DoktorAd,'') AS Doktor
+                             FROM Tbl_Tahliller
+                             WHERE HastaTC = @tc
+                             ORDER BY TahlilTarih DESC";
+                using var cmd = new SqlCommand(q, conn);
+                cmd.Parameters.AddWithValue("@n", maxRows);
+                cmd.Parameters.AddWithValue("@tc", HastaTC);
+                using var r = cmd.ExecuteReader();
+                var sb = new StringBuilder();
+                sb.AppendLine("Tarih | Tür | Tahlil | Sonuç | Durum | Doktor");
+                sb.AppendLine("--- | --- | --- | --- | --- | ---");
+                int count = 0;
+                while (r.Read())
+                {
+                    count++;
+                    string tarih = r["Tarih"]?.ToString();
+                    string tur = r["Tur"]?.ToString();
+                    string ad = r["Ad"]?.ToString();
+                    string sonuc = r["Sonuc"]?.ToString();
+                    string durum = r["Durum"]?.ToString();
+                    string doktor = r["Doktor"]?.ToString();
+                    sb.AppendLine($"{tarih} | {tur} | {ad} | {sonuc} | {durum} | {doktor}");
+                }
+                if (count == 0)
+                {
+                    sb.AppendLine("(Bu hastaya ait tahlil kaydı bulunamadı.)");
+                }
+                return sb.ToString();
+            }
+            catch (Exception ex)
+            {
+                return $"(Tahliller okunamadı: {ex.Message})";
+            }
+            finally
+            {
+                SqlBaglantisi.Instance.CloseConnection();
+            }
+        }
+
+        private void AppendAiChat(string speaker, string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return;
+            var ts = DateTime.Now.ToString("HH:mm");
+            _aiChatBuffer += $"[{ts}] {speaker}:\r\n{text.Trim()}\r\n\r\n";
+            if (_aiChat != null)
+            {
+                _aiChat.Text = _aiChatBuffer;
+                _aiChat.SelectionStart = _aiChat.Text.Length;
+                _aiChat.ScrollToCaret();
+            }
+        }
+
+        private async Task RunAiAnalysisAsync(string userQuestion)
+        {
+            UpdateAiAvailabilityUI();
+            var key = GeminiClient.GetApiKeyFromEnvironment();
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                XtraMessageBox.Show("Gemini API anahtarı bulunamadı. Ortam değişkeni olarak GEMINI_API_KEY tanımlayın.", "Yapay Zeka", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            // boş soru varsa sadece analiz
+            if (!string.IsNullOrWhiteSpace(userQuestion))
+            {
+                AppendAiChat("Siz", userQuestion);
+            }
+
+            string labs = _aiPdfBytes != null ? "" : GetLatestTahlillerAsText(20);
+            string prompt = BuildTahlilPrompt(labs, userQuestion);
+
+            _aiBtnAnalyze.Enabled = false;
+            _aiBtnSend.Enabled = false;
+            if (_aiBtnPdfSelect != null) _aiBtnPdfSelect.Enabled = false;
+            if (_aiBtnPdfClear != null) _aiBtnPdfClear.Enabled = false;
+            if (_aiStatus != null) _aiStatus.Text = "Yapay zeka yanıt üretiyor...";
+
+            _aiCts?.Cancel();
+            _aiCts?.Dispose();
+            _aiCts = new CancellationTokenSource();
+
+            try
+            {
+                var client = new GeminiClient(_aiHttp, key);
+                string answer;
+                if (_aiPdfBytes != null)
+                {
+                    AppendAiChat("Sistem", $"PDF analiz ediliyor: {_aiPdfName ?? "dosya"}");
+                    answer = await client.GenerateWithPdfAsync(prompt, _aiPdfBytes, "application/pdf", _aiCts.Token);
+                }
+                else
+                {
+                    answer = await client.GenerateAsync(prompt, _aiCts.Token);
+                }
+                AppendAiChat("Asistan", answer);
+                if (_aiInput != null) _aiInput.Text = "";
+                if (_aiStatus != null) _aiStatus.Text = "Hazır.";
+            }
+            catch (OperationCanceledException)
+            {
+                if (_aiStatus != null) _aiStatus.Text = "İptal edildi.";
+            }
+            catch (Exception ex)
+            {
+                if (_aiStatus != null) _aiStatus.Text = "Hata oluştu.";
+                XtraMessageBox.Show(ex.Message, "Gemini Hatası", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                _aiBtnAnalyze.Enabled = true;
+                _aiBtnSend.Enabled = true;
+                if (_aiBtnPdfSelect != null) _aiBtnPdfSelect.Enabled = true;
+                if (_aiBtnPdfClear != null) _aiBtnPdfClear.Enabled = true;
+            }
         }
 
         private DevExpress.XtraBars.Navigation.NavigationPage CreateModernHomePage()
@@ -2021,7 +2519,7 @@ namespace Hastane_Otomasyonu
                 var normal = ColorTranslator.FromHtml("#111827");
                 var flash = ColorTranslator.FromHtml("#1D4ED8");
                 lastPanel.Appearance.BackColor = flash;
-                var t = new Timer { Interval = 140 };
+                var t = new System.Windows.Forms.Timer { Interval = 140 };
                 t.Tick += (s, e) =>
                 {
                     t.Stop();
@@ -2793,7 +3291,7 @@ namespace Hastane_Otomasyonu
             navDashboard.Text = "Randevu İşlemleri";
             navRandevuAl.Text = "Tıbbi Bilgiler ve Sonuçlar";
             navTahliller.Text = "Profil ve Kişisel Bilgiler";
-            navReceteler.Text = "İletişim ve Etkileşim";
+            navReceteler.Text = "Yapay Zeka Asistanı";
             navHealthInfo.Text = "Çıkış Yap";
 
             // Eski click handler'ları söküp yenilerini bağla
@@ -2815,7 +3313,10 @@ namespace Hastane_Otomasyonu
             navDashboard.ImageOptions.SvgImage = TryLoadSvg(assembly, "DevExpress.Images.SvgImages.Scheduling.NewAppointment.svg");
             navRandevuAl.ImageOptions.SvgImage = TryLoadSvg(assembly, "DevExpress.Images.SvgImages.Icon Builder.Travel_Medical.svg");
             navTahliller.ImageOptions.SvgImage = TryLoadSvg(assembly, "DevExpress.Images.SvgImages.Business.Business_User.svg");
-            navReceteler.ImageOptions.SvgImage = TryLoadSvg(assembly, "DevExpress.Images.SvgImages.Mail.Mail.svg");
+            navReceteler.ImageOptions.SvgImage = TryLoadSvg(assembly,
+                "DevExpress.Images.SvgImages.Medical.Lab.svg",
+                "DevExpress.Images.SvgImages.Medical.MedicalRecord.svg",
+                "DevExpress.Images.SvgImages.Mail.Mail.svg");
             navHealthInfo.ImageOptions.SvgImage = TryLoadSvg(assembly,
                 "DevExpress.Images.SvgImages.Actions.Exit.svg",
                 "DevExpress.Images.SvgImages.Actions.Close.svg",

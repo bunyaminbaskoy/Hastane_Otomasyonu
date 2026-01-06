@@ -36,12 +36,6 @@ namespace Hastane_Otomasyonu
         private SimpleButton _btnOnayla;
         private SimpleButton _btnYenile;
 
-        private TextEdit _txtHastaTc;
-        private TextEdit _txtTahlilAd;
-        private TextEdit _txtSonuc;
-        private ComboBoxEdit _cmbDurum;
-        private SimpleButton _btnTahlilKaydet;
-
         // Modern tahlil upload
         private ComboBoxEdit _tahlilHastaSelect;
         private ComboBoxEdit _tahlilTurSelect;
@@ -720,26 +714,26 @@ namespace Hastane_Otomasyonu
                 if (_tahlilPdfInfo != null) _tahlilPdfInfo.Text = "PDF: seçilmedi";
             };
 
-            _btnTahlilKaydet = new SimpleButton
+            var btnTahlilKaydet = new SimpleButton
             {
                 Text = "TAHLİLİ KAYDET",
                 Dock = DockStyle.Fill,
                 Cursor = Cursors.Hand,
                 ButtonStyle = DevExpress.XtraEditors.Controls.BorderStyles.NoBorder
             };
-            _btnTahlilKaydet.LookAndFeel.UseDefaultLookAndFeel = false;
-            _btnTahlilKaydet.Appearance.BackColor = ColorTranslator.FromHtml("#F59E0B");
-            _btnTahlilKaydet.Appearance.ForeColor = ColorTranslator.FromHtml("#0B1220");
-            _btnTahlilKaydet.Appearance.Font = new Font("Segoe UI", 12F, FontStyle.Bold);
-            _btnTahlilKaydet.Appearance.Options.UseBackColor = true;
-            _btnTahlilKaydet.Appearance.Options.UseForeColor = true;
-            _btnTahlilKaydet.Appearance.Options.UseFont = true;
-            _btnTahlilKaydet.AppearanceHovered.BackColor = ColorTranslator.FromHtml("#D97706");
-            _btnTahlilKaydet.AppearanceHovered.Options.UseBackColor = true;
-            _btnTahlilKaydet.AppearancePressed.BackColor = ColorTranslator.FromHtml("#B45309");
-            _btnTahlilKaydet.AppearancePressed.Options.UseBackColor = true;
-            _btnTahlilKaydet.SizeChanged += (s, e) => _btnTahlilKaydet.Region = Region.FromHrgn(CreateRoundRectRgn(0, 0, _btnTahlilKaydet.Width, _btnTahlilKaydet.Height, 28, 28));
-            _btnTahlilKaydet.Click += (_, _) => SaveTahlil();
+            btnTahlilKaydet.LookAndFeel.UseDefaultLookAndFeel = false;
+            btnTahlilKaydet.Appearance.BackColor = ColorTranslator.FromHtml("#F59E0B");
+            btnTahlilKaydet.Appearance.ForeColor = ColorTranslator.FromHtml("#0B1220");
+            btnTahlilKaydet.Appearance.Font = new Font("Segoe UI", 12F, FontStyle.Bold);
+            btnTahlilKaydet.Appearance.Options.UseBackColor = true;
+            btnTahlilKaydet.Appearance.Options.UseForeColor = true;
+            btnTahlilKaydet.Appearance.Options.UseFont = true;
+            btnTahlilKaydet.AppearanceHovered.BackColor = ColorTranslator.FromHtml("#D97706");
+            btnTahlilKaydet.AppearanceHovered.Options.UseBackColor = true;
+            btnTahlilKaydet.AppearancePressed.BackColor = ColorTranslator.FromHtml("#B45309");
+            btnTahlilKaydet.AppearancePressed.Options.UseBackColor = true;
+            btnTahlilKaydet.SizeChanged += (s, e) => btnTahlilKaydet.Region = Region.FromHrgn(CreateRoundRectRgn(0, 0, btnTahlilKaydet.Width, btnTahlilKaydet.Height, 28, 28));
+            btnTahlilKaydet.Click += (_, _) => SaveTahlil();
 
             var pdfRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3 };
             pdfRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
@@ -760,7 +754,7 @@ namespace Hastane_Otomasyonu
             form.Controls.Add(WrapField(_tahlilTurSelect), 0, 1);
             form.Controls.Add(WrapField(pdfRow), 0, 2);
             form.Controls.Add(WrapField(_tahlilNot), 0, 3);
-            form.Controls.Add(_btnTahlilKaydet, 0, 4);
+            form.Controls.Add(btnTahlilKaydet, 0, 4);
 
             content.Controls.Add(form);
             form.BringToFront();
